@@ -7,12 +7,12 @@ use core::arch::global_asm;
 use core::arch::asm;
 
 use core::mem::size_of;
-use core::ffi::c_void;
 
 use core::slice;
 use core::ptr;
 
 mod aml;
+mod uefi;
 
 global_asm!(r#"
 .global _entry
@@ -24,67 +24,6 @@ _entry:
 _stop:
  jmp _stop
 "#);
-
-#[repr(C, packed)]
-struct EfiTableHeader {
-	signature : u64,
-	revision : u32,
-	header_size : u32,
-	crc : u32,
-	reserved : u32,
-}
-
-#[repr(C, packed)]
-struct EfiBootServices {
-	header : EfiTableHeader,
-
-	raise_tpl : *const c_void,
-	restore_tpl : *const c_void,
-
-	allocate_pages : *const c_void,
-	free_pages : *const c_void,
-	get_memory_map : *const c_void,
-	allocate_pool : *const c_void,
-	free_pool : *const c_void,
-
-	create_event : *const c_void,
-	set_timer : *const c_void,
-	wait_for_event : *const c_void,
-	signal_event : *const c_void,
-	close_event : *const c_void,
-	check_event : *const c_void,
-
-	install_protocol_interface : *const c_void,
-	reinstall_protocol_interface : *const c_void,
-	uninstall_protocol_interface : *const c_void,
-	handle_protocol : *const c_void,
-	reserved_0 : *const c_void,
-	register_protocol_notify : *const c_void,
-	locate_handle : *const c_void,
-	locate_device_path : *const c_void,
-	install_configuration_table : *const c_void,
-
-	load_image : *const c_void,
-	start_image : *const c_void,
-	exit : *const c_void,
-	unload_image : *const c_void,
-	exit_boot_services : *const c_void,
-
-	get_next_monotonic_count : *const c_void,
-	stall : *const c_void,
-	set_watchdog_timer : *const c_void,
-
-	connect_controller : *const c_void,
-	disconnect_controller : *const c_void,
-
-	open_protocol : *const c_void,
-	close_protocol : *const c_void,
-	open_protocol_information : *const c_void,
-
-	protocols_per_handle : *const c_void,
-	locate_handle_buffer : *const c_void,
-	locate_protocol : *const c_void,
-}
 
 #[repr(C, packed)]
 struct AcpiSdtHeader {
@@ -213,21 +152,6 @@ struct GenericAddressStructure {
 }
 
 #[repr(C, packed)]
-struct EfiSystemTable {
-	header : EfiTableHeader,
-	vendor : *const u16,
-	revision : u32,
-	console_in_handle : *const c_void,
-	text_in_protocol : *const c_void,
-	console_out_handle : *const c_void,
-	text_out_protocol : *const c_void,
-	console_stderr_handle : *const c_void,
-	text_stderr_protocol : *const c_void,
-	runtime_services : *const c_void,
-	boot_services : *const EfiBootServices,	
-}
-
-#[repr(C, packed)]
 struct Multiboot2Header {
 	magic : u32,
 	architecture : u32,
@@ -305,6 +229,9 @@ fn com0_init(){
 
 #[no_mangle]
 pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
+	assert!(magic == 0x36d76289);
+
+	assert!(size_of::<u64>() == size_of::<fn ()>());
 
 	com0_init();
 	com0_write(b"Hello world");
@@ -316,10 +243,18 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 		let next_type = unsafe { *(base_pointer.offset(offset) as *const u32) };
 		let next_size = unsafe { *(base_pointer.offset(offset+4) as *const u32) };
 
-		//if next_type == 12 { // efi system table
-			//let system_table_pointer = *(base_pointer.offset(offset + 8) as *const u64);
-			//let system_table = &*(system_table_pointer as *const EfiSystemTable);
-		//}
+		if next_type == 12 { // efi system table
+			let system_table_pointer = unsafe { *(base_pointer.offset(offset + 8) as *const u64) };
+			let system_table = unsafe { &*(system_table_pointer as *const uefi::SystemTable) };
+			let interface = uefi::locate_gop(system_table);
+
+			if let Some(interface) = interface {
+				let interface = unsafe { &*interface };
+				interface.get_mode_info();
+				loop {}
+			}
+
+		}
 
 		if next_type == 15 { // ACPI new RSDP -> copy of RSDPv2 (XSDP)
 			let xsdp_pointer = unsafe { base_pointer.offset(offset + 8) as *const XSDP };

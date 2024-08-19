@@ -1,5 +1,5 @@
 # Meadowfoam
-Operating system written in Rust using Multiboot2 for UEFI systems
+Operating system written in Rust
 ## Drivers
 1. IO Port drivers
    - [x] Serial port
@@ -10,4 +10,4 @@ Operating system written in Rust using Multiboot2 for UEFI systems
    - [ ] ACPI machine language parser
    - [ ] PCIe
    - [ ] USB Host controller
-   - [ ] UEFI GOP for initial debugging messages
+   - [x] UEFI GOP for initial debugging messages
