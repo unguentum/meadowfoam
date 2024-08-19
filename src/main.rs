@@ -13,6 +13,7 @@ use core::ptr;
 
 mod aml;
 mod uefi;
+mod font;
 
 global_asm!(r#"
 .global _entry
@@ -22,6 +23,8 @@ _entry:
  mov rsi, rbx
  jmp kernel_entry
 _stop:
+ cli
+ hlt
  jmp _stop
 "#);
 
@@ -229,12 +232,11 @@ fn com0_init(){
 
 #[no_mangle]
 pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
+
 	assert!(magic == 0x36d76289);
 
-	assert!(size_of::<u64>() == size_of::<fn ()>());
-
-	com0_init();
-	com0_write(b"Hello world");
+	//com0_init();
+	//com0_write(b"Hello world");
 
 	let total_size : u32 = unsafe { core::ptr::read_volatile(multiboot_info as *const u32) };
 	let mut offset : isize = 8;
@@ -251,7 +253,6 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 			if let Some(interface) = interface {
 				let interface = unsafe { &*interface };
 				interface.get_mode_info();
-				loop {}
 			}
 
 		}
@@ -264,14 +265,12 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 			for entry_index in 0..entry_amount {
 				let entry = xsdt.get_entry(entry_index);
 				if let Some(entry) = entry {
-					if unsafe { (*entry).header.signature } == *b"FACP" {
+					let signature = unsafe { (*entry).header.signature };
+					if signature == *b"FACP" {
 						let fadt = entry as *const FADT;
 						let dsdt : &Sdt = unsafe {&*(*fadt).x_dsdt};
 						let dsdt_body = dsdt.get_body();
-
 						aml::aml_parse_bytes(dsdt_body);
-
-						loop {}
 					}
 				}
 			}
@@ -282,7 +281,12 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 			offset += 8 - (offset % 8);
 		}
 	}
-	loop {}
+	loop {
+		unsafe {
+			asm!("cli");
+			asm!("hlt");
+		}
+	}
 }
 
 

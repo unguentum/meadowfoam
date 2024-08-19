@@ -6,8 +6,13 @@ Operating system written in Rust
    - [ ] PS2 Keyboard
    - [ ] PS2 Mouse
 2. Memory mapped IO
-   - [ ] ACPI table parser
+   - [x] ACPI table parser
    - [ ] ACPI machine language parser
    - [ ] PCIe
    - [ ] USB Host controller
    - [x] UEFI GOP for initial debugging messages
+
+## Miscellaneous tasks
+- [x] Console font
+- [ ] Better console font
+- [ ] OS icon

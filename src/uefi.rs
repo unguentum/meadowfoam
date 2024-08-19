@@ -1,4 +1,7 @@
 use core::ffi::c_void;
+use core::arch::asm;
+
+use crate::font;
 
 type LocateProtocol = extern "efiapi" fn(protocol : *const Guid, registration : *const c_void, interface : *mut *const c_void) -> StatusCode;
 
@@ -54,7 +57,7 @@ struct GOPModeInformation {
 	vertical_resolution : u32,
 	pixel_format : GraphicsPixelFormat,
 	pixel_information : PixelBitmask,
-	pixels_per_scan_line : u32,
+	pixels_per_scanline : u32,
 }
 
 #[repr(C)]
@@ -85,6 +88,34 @@ pub struct GraphicsOutputProtocol {
 	mode : *const GOPMode,
 }
 
+// this uses the triplefault to cause a cpu reset
+// on some devices this does not trigger a reboot
+unsafe fn triplefault() -> ! {
+	let null_idt : [u64; 2] = [0;2];
+	asm!("lidt [{}]", in(reg) &null_idt);
+	asm!("sti");
+	asm!("int3");
+	loop {}
+}
+
+fn draw_letter(frame_buffer : *mut u32, x : usize, y : usize, pixels_per_line : usize, c : u8) {
+	if c < b'a' || c > b'z' {
+		return;
+	}
+	for dy in 0..font::FONT_HEIGHT {
+		for dx in 0..font::FONT_WIDTH {
+			let color = if font::FONT_DATA[(c-b'a') as usize][dy][dx] == 1 { 0xFFFFFF } else { 0 };
+			unsafe { *frame_buffer.add(x + dx + ( y + dy ) * pixels_per_line) = color; }
+		}
+	}
+}
+
+fn draw_string(frame_buffer : *mut u32, x : usize, y : usize, pixels_per_line : usize, str : &[u8]) {
+	for (index, c) in str.iter().enumerate() {
+		draw_letter(frame_buffer, x + index * font::FONT_WIDTH, y, pixels_per_line, *c);
+	}
+}
+
 impl GraphicsOutputProtocol {
 	pub fn get_mode_info(&self) {
 		let mut info_pointer : *const GOPModeInformation = core::ptr::null();
@@ -93,7 +124,16 @@ impl GraphicsOutputProtocol {
 		let native_mode : UIntN;
 		let current_mode = if self.mode.is_null() { 0 } else { unsafe { (*self.mode).mode } };
 		let status = (self.query_mode)(self, current_mode, &mut size_of_info, &mut info_pointer);
-		loop {}
+		if let StatusCode::SUCCESS = status {
+			let info = unsafe { &*info_pointer };
+
+			// TODO this does not work on real hardware but has to be called for qemu???
+			let status = (self.set_mode)(self, current_mode);
+			if let StatusCode::SUCCESS = status {
+				let frame_buffer = unsafe { (*self.mode).frame_buffer_base as *mut u32 };
+				draw_string(frame_buffer, 100, 100, info.pixels_per_scanline as usize, b"abcdefghijklmnopqrstuvwxyz");
+			}
+		}
 	}
 }
 
