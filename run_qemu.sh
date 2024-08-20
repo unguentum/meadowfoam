@@ -1,4 +1,3 @@
 cargo build &&
-cp target/x86_64-unknown-none/debug/meadowfoam iso_content/boot/ &&
-grub-mkrescue -o meadowfoam.iso iso_content &&
-qemu-system-x86_64 -net none --bios $OVMF_FD -m 256M -cdrom meadowfoam.iso -s -S #-serial mon:stdio
+cp target/x86_64-unknown-uefi/debug/meadowfoam.efi img_content/EFI/BOOT/BOOTX64.efi &&
+qemu-system-x86_64 -net none --bios $OVMF_FD -m 256M -hdb fat:rw:img_content/ -s #-S

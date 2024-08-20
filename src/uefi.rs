@@ -1,10 +1,10 @@
 use core::ffi::c_void;
-use crate::triple_fault::triple_fault;
 use core::arch::asm;
 
 type LocateProtocol = extern "efiapi" fn(protocol : *const Guid, registration : *const c_void, interface : *mut *const c_void) -> StatusCode;
 
 type PhysicalAddress = u64;
+pub type Handle = *mut c_void;
 
 type GOPQueryMode = extern "efiapi" fn(this : *const GraphicsOutputProtocol, mode_number : u32, size_of_info : *mut UIntN, info:  *mut *const GOPModeInformation) -> StatusCode;
 type GOPSetMode = extern "efiapi" fn(this : *mut GraphicsOutputProtocol, mode_number : u32) -> StatusCode;
@@ -101,8 +101,8 @@ impl GraphicsOutputProtocol {
 	}
 
 	pub unsafe fn get_pixels_per_line(&self) -> Option<usize> {
-		Some(self.mode.as_ref()?.info.as_ref()?.vertical_resolution as usize)
-		//Some(self.mode.as_ref()?.info.as_ref()?.pixels_per_scanline as usize)
+		//Some(self.mode.as_ref()?.info.as_ref()?.vertical_resolution as usize)
+		Some(self.mode.as_ref()?.info.as_ref()?.pixels_per_scanline as usize)
 	}
 
 	pub fn query_mode(&self, mode : u32) -> Option<*const GOPModeInformation>{
@@ -120,24 +120,7 @@ impl GraphicsOutputProtocol {
 	}
 	
 	pub fn set_mode(&mut self, mode : u32){
-
-		if self.set_mode as u64 == 0 {
-			unsafe { triple_fault(); }
-		}
-
-		if mode != unsafe { (*self.mode).mode } {
-			unsafe { triple_fault(); }
-		}
-
-		if self as *const Self as u64 == 0 {
-			unsafe { triple_fault(); }
-		}
-
-		unsafe { asm!("sti");};
 		let status = (self.set_mode)(self, mode);
-
-		unsafe { triple_fault(); }
-
 		if status != StatusCode::SUCCESS { panic!("Could not set mode"); }		
 	}
 }
