@@ -17,12 +17,14 @@ impl fmt::Write for ScreenWriter<'_> {
 		for c in string.chars() {
 			match c {
 				'\n' => { 
-					self.cursor_x = 0;
-					self.cursor_y += 1;
+					self.new_line();
 				}
 				_ => {
 					self.output_char(c);
 					self.cursor_x += 1;
+					if self.cursor_x * FONT_WIDTH > self.pixels_per_line - FONT_WIDTH {
+						self.new_line();
+					}
 				}
 			}
 		}
@@ -31,6 +33,10 @@ impl fmt::Write for ScreenWriter<'_> {
 }
 
 impl ScreenWriter<'_> {
+	pub fn new_line(&mut self) {
+		self.cursor_x = 0;
+		self.cursor_y += 1;
+	}
 	pub fn new(frame_buffer : &mut [u32], pixels_per_line : usize) -> ScreenWriter {
 		ScreenWriter {
 			cursor_x : 0,

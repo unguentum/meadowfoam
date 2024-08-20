@@ -11,25 +11,26 @@ use core::mem::size_of;
 use core::slice;
 use core::ptr;
 
+use core::fmt::Write;
+
 mod aml;
 mod uefi;
 mod graphics;
+mod triple_fault;
 
 macro_rules! print {
-	($writer_name:ident, $($arg:tt),*) => {
-		core::fmt::write(&mut $writer_name, format_args!($($arg)*)).unwrap();
+	($writer_name:expr, $($arg:tt)*) => {
+		$writer_name.write_fmt(format_args!($($arg)*)).unwrap();
 	};
 }
 
 global_asm!(r#"
 .global _entry
 _entry:
- cli
  mov rdi, rax
  mov rsi, rbx
  jmp kernel_entry
 _stop:
- cli
  hlt
  jmp _stop
 "#);
@@ -241,8 +242,8 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 
 	assert!(magic == 0x36d76289);
 
-	//com0_init();
-	//com0_write(b"Hello world");
+	com0_init();
+	com0_write(b"Hello world");
 
 	let total_size : u32 = unsafe { core::ptr::read_volatile(multiboot_info as *const u32) };
 	let mut offset : isize = 8;
@@ -255,12 +256,22 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 			let system_table_pointer = unsafe { *(base_pointer.offset(offset + 8) as *const u64) };
 			let system_table = unsafe { &*(system_table_pointer as *const uefi::SystemTable) };
 			if let Some(interface) = uefi::locate_gop(system_table) {
-				let interface = unsafe { &*interface };
-				if let Some((frame_buffer, pixels_per_line)) = interface.get_framebuffer() {
-					let mut writer = graphics::ScreenWriter::new(frame_buffer, pixels_per_line as usize);
-					print!(writer, "Hello world!\n");
-					print!(writer, "Hello world!\n");
-					print!(writer, "Hello world!\n");
+				let interface = unsafe { &mut *interface };
+				if let None = unsafe { interface.current_mode() } {
+					interface.set_mode(0);
+				}
+				let current_mode = unsafe { interface.current_mode().unwrap() };
+				interface.set_mode(current_mode);
+				let frame_buffer = unsafe { interface.get_framebuffer().unwrap()};
+				let pixels_per_line = unsafe { interface.get_pixels_per_line().unwrap() };
+				let mut writer = graphics::ScreenWriter::new(frame_buffer, pixels_per_line as usize);
+				print!(writer, "TextIO using UEFI GOP\n");
+				print!(writer, "Graphics protocol: {:#?}\n", &interface);
+				print!(writer, "Graphics mode : {:#?}\n", unsafe {&*interface.mode } );
+
+				for mode in 0.. unsafe{interface.mode.as_ref().unwrap().max_mode}{
+					let info = interface.query_mode(mode);
+					print!(writer, "{:#?}", unsafe { info.unwrap().as_ref() });
 				}
 			}
 		}
@@ -291,7 +302,6 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 	}
 	loop {
 		unsafe {
-			asm!("cli");
 			asm!("hlt");
 		}
 	}

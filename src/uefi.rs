@@ -1,12 +1,14 @@
 use core::ffi::c_void;
+use crate::triple_fault::triple_fault;
+use core::arch::asm;
 
 type LocateProtocol = extern "efiapi" fn(protocol : *const Guid, registration : *const c_void, interface : *mut *const c_void) -> StatusCode;
 
 type PhysicalAddress = u64;
 
 type GOPQueryMode = extern "efiapi" fn(this : *const GraphicsOutputProtocol, mode_number : u32, size_of_info : *mut UIntN, info:  *mut *const GOPModeInformation) -> StatusCode;
-type GOPSetMode = extern "efiapi" fn(this : *const GraphicsOutputProtocol, mode_number : u32) -> StatusCode;
-type GOPBlt = extern "efiapi" fn(this : *const GraphicsOutputProtocol, blt_buffer : *const GOPBltPixel, blt_operation : GOPBltOperation, source_x : UIntN, source_y : UIntN, destination_x : UIntN, destination_y : UIntN, width : UIntN, height : UIntN, delta : UIntN) -> StatusCode;
+type GOPSetMode = extern "efiapi" fn(this : *mut GraphicsOutputProtocol, mode_number : u32) -> StatusCode;
+type GOPBlt = extern "efiapi" fn(this : *mut GraphicsOutputProtocol, blt_buffer : *const GOPBltPixel, blt_operation : GOPBltOperation, source_x : UIntN, source_y : UIntN, destination_x : UIntN, destination_y : UIntN, width : UIntN, height : UIntN, delta : UIntN) -> StatusCode;
 
 // unsigned value of native width
 type UIntN = usize;
@@ -22,6 +24,7 @@ enum GOPBltOperation {
 	GOBltOperationMax,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 enum GraphicsPixelFormat {
 	PixelRedGreenBlueReserved8BitPerColor,
@@ -31,6 +34,7 @@ enum GraphicsPixelFormat {
 	PixelFormatMax,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 struct PixelBitmask {
 	red_mask : u32,
@@ -47,8 +51,9 @@ struct GOPBltPixel {
 	reserved : u8,
 }
 
+#[derive(Debug)]
 #[repr(C)]
-struct GOPModeInformation {
+pub struct GOPModeInformation {
 	version : u32,
 	horizontal_resolution : u32,
 	vertical_resolution : u32,
@@ -57,10 +62,11 @@ struct GOPModeInformation {
 	pixels_per_scanline : u32,
 }
 
+#[derive(Debug)]
 #[repr(C)]
-struct GOPMode {
-	max_mode : u32,
-	mode : u32,
+pub struct GOPMode {
+	pub max_mode : u32,
+	pub mode : u32,
 	info : *const GOPModeInformation,
 	size_of_info : UIntN,
 	frame_buffer_base : PhysicalAddress,
@@ -77,30 +83,62 @@ pub struct Guid {
 	data4 : [u8; 8],
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct GraphicsOutputProtocol {
 	query_mode : GOPQueryMode,
 	set_mode : GOPSetMode,
 	blt : GOPBlt,
-	mode : *const GOPMode,
+	pub mode : *const GOPMode,
 }
 
 impl GraphicsOutputProtocol {
-	pub fn get_framebuffer(&self) -> Option<(&mut [u32], u32)> {
+
+	pub unsafe fn get_framebuffer(&self) -> Option<&mut [u32]> {
+		let frame_buffer_base = self.mode.as_ref()?.frame_buffer_base;
+		let frame_buffer_size = self.mode.as_ref()?.frame_buffer_size;
+		Some(core::slice::from_raw_parts_mut(frame_buffer_base as *mut u32, frame_buffer_size))
+	}
+
+	pub unsafe fn get_pixels_per_line(&self) -> Option<usize> {
+		Some(self.mode.as_ref()?.info.as_ref()?.vertical_resolution as usize)
+		//Some(self.mode.as_ref()?.info.as_ref()?.pixels_per_scanline as usize)
+	}
+
+	pub fn query_mode(&self, mode : u32) -> Option<*const GOPModeInformation>{
 		let mut info_pointer : *const GOPModeInformation = core::ptr::null();
 		let mut size_of_info : UIntN = 42;
-		let num_modes : UIntN;
-		let native_mode : UIntN;
-		let current_mode = if self.mode.is_null() { 0 } else { unsafe { (*self.mode).mode } };
-		let status = (self.query_mode)(self, current_mode, &mut size_of_info, &mut info_pointer);
-		if status != StatusCode::SUCCESS { return None; }
-		let info = unsafe { &*info_pointer };
-		// TODO this does not work on real hardware but has to be called for qemu???
-		let status = (self.set_mode)(self, current_mode);
-		if status != StatusCode::SUCCESS { return None; }
-		let frame_buffer = unsafe { (*self.mode).frame_buffer_base as *mut u32 };
-		let frame_buffer = unsafe { core::slice::from_raw_parts_mut(frame_buffer, (*self.mode).frame_buffer_size) };
-		Some((frame_buffer, info.pixels_per_scanline))
+		let status = (self.query_mode)(self, mode, &mut size_of_info, &mut info_pointer);
+		match status {
+			StatusCode::SUCCESS => Some(info_pointer),
+			_ => None,
+		}
+	}
+
+	pub unsafe fn current_mode(&self) -> Option<u32> {
+		Some(self.mode.as_ref()?.mode)
+	}
+	
+	pub fn set_mode(&mut self, mode : u32){
+
+		if self.set_mode as u64 == 0 {
+			unsafe { triple_fault(); }
+		}
+
+		if mode != unsafe { (*self.mode).mode } {
+			unsafe { triple_fault(); }
+		}
+
+		if self as *const Self as u64 == 0 {
+			unsafe { triple_fault(); }
+		}
+
+		unsafe { asm!("sti");};
+		let status = (self.set_mode)(self, mode);
+
+		unsafe { triple_fault(); }
+
+		if status != StatusCode::SUCCESS { panic!("Could not set mode"); }		
 	}
 }
 
@@ -190,14 +228,14 @@ impl StatusCode {
 	pub const SUCCESS : StatusCode = StatusCode(0);
 }
 
-pub fn locate_gop(system_table : &SystemTable) -> Option<*const GraphicsOutputProtocol> {
+pub fn locate_gop(system_table : &SystemTable) -> Option<*mut GraphicsOutputProtocol> {
 	let registration = core::ptr::null();
 	let mut interface : *const c_void = core::ptr::null();
 	let protocol_pointer = &GRAPHICS_OUTPUT_PROTOCOL_GUID as *const Guid;
 	let boot_services : &BootServices = unsafe { &*system_table.boot_services };
 	let function = boot_services.locate_protocol;
 	if let StatusCode::SUCCESS = function(protocol_pointer, registration, &mut interface) {
-		return Some(interface as *const GraphicsOutputProtocol);
+		return Some(interface as *mut GraphicsOutputProtocol);
 	} else {
 		return None;
 	}
