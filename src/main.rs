@@ -13,7 +13,13 @@ use core::ptr;
 
 mod aml;
 mod uefi;
-mod font;
+mod graphics;
+
+macro_rules! print {
+	($writer_name:ident, $($arg:tt),*) => {
+		core::fmt::write(&mut $writer_name, format_args!($($arg)*)).unwrap();
+	};
+}
 
 global_asm!(r#"
 .global _entry
@@ -248,13 +254,15 @@ pub fn kernel_entry(magic : u32, multiboot_info : u64) -> ! {
 		if next_type == 12 { // efi system table
 			let system_table_pointer = unsafe { *(base_pointer.offset(offset + 8) as *const u64) };
 			let system_table = unsafe { &*(system_table_pointer as *const uefi::SystemTable) };
-			let interface = uefi::locate_gop(system_table);
-
-			if let Some(interface) = interface {
+			if let Some(interface) = uefi::locate_gop(system_table) {
 				let interface = unsafe { &*interface };
-				interface.get_mode_info();
+				if let Some((frame_buffer, pixels_per_line)) = interface.get_framebuffer() {
+					let mut writer = graphics::ScreenWriter::new(frame_buffer, pixels_per_line as usize);
+					print!(writer, "Hello world!\n");
+					print!(writer, "Hello world!\n");
+					print!(writer, "Hello world!\n");
+				}
 			}
-
 		}
 
 		if next_type == 15 { // ACPI new RSDP -> copy of RSDPv2 (XSDP)
