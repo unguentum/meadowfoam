@@ -1,6 +1,9 @@
-#[repr(C, packed)]
-struct AcpiSdtHeader {
-	signature : [u8; 4],
+use core::ptr;
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct SDTHeader {
+	pub signature : [u8; 4],
 	length : u32,
 	revision : u8,
 	checksum : u8,
@@ -11,56 +14,79 @@ struct AcpiSdtHeader {
 	creator_revision : u32,
 }
 
-#[repr(C, packed)]
-struct Sdt {
-	header : AcpiSdtHeader,
+#[repr(C)]
+pub struct XSDT {
+	header : SDTHeader,
 }
 
-impl Sdt {
-	fn get_body(&self) -> &[u8] {
-		let byte_pointer = self as *const Self as *const u8;
-		let byte_pointer = unsafe { byte_pointer.add(size_of::<AcpiSdtHeader>()) };
-		unsafe { slice::from_raw_parts(byte_pointer, self.header.length as usize - size_of::<AcpiSdtHeader>()) }
-	}
-}
-
-#[repr(C, packed)]
-struct XSDT {
-	header : AcpiSdtHeader,
+#[derive(Debug)]
+#[repr(C)]
+pub struct DSDT {
+	header : SDTHeader,
 }
 
 impl XSDT {
-	fn entry_amount(&self) -> usize {
-		let entry_length = self.header.length as usize - size_of::<AcpiSdtHeader>();
-		entry_length / size_of::<*const AcpiSdtHeader>()
+	const FADT_SIGNATURE : &[u8; 4] = b"FACP";
+	fn find_table(&self, signature : &[u8; 4]) -> Option<*const SDTHeader> {
+		unsafe {
+			self.get_tables().find(|table| table.as_ref().unwrap().signature == *signature)
+		}
 	}
-	fn get_entry(&self, index : usize) -> Option<*const Sdt> {
-		if index >= self.entry_amount() {
+	pub fn find_fadt(&self) -> Option<*const FADT> {
+		self.find_table(Self::FADT_SIGNATURE).map(|ptr| ptr as *const FADT)
+	}
+	pub fn get_tables(&self) -> impl Iterator<Item = *const SDTHeader> + '_{
+		(0..self.table_amount()).map(|index| self.get_table(index).expect("Elements in range are present"))
+	}
+	fn table_amount(&self) -> usize {
+		let entry_length = self.header.length as usize - size_of::<SDTHeader>();
+		entry_length / size_of::<*const SDTHeader>()
+	}
+	fn get_table(&self, index : usize) -> Option<*const SDTHeader> {
+		if index >= self.table_amount() {
 			return None;
 		}
 		let byte_pointer = self as *const Self as *const u8;
-		let byte_pointer = unsafe { byte_pointer.add(size_of::<AcpiSdtHeader>() + index * size_of::<*const Sdt>()) };
-		let data = unsafe { ptr::read_unaligned(byte_pointer as *const *const Sdt) };
+		let byte_pointer = unsafe { byte_pointer.add(size_of::<SDTHeader>() + index * size_of::<u64>()) };
+		let data = unsafe {ptr::read_unaligned(byte_pointer as *const *const SDTHeader)};
 		Some(data)
 	}
 }
 
+#[derive(Debug)]
 #[repr(C, packed)]
-struct XSDP {
+pub struct XSDP {
 	signature : [u8; 8],
 	checksum : u8,
 	oemid : [u8; 6],
 	revision : u8,
 	rsdt_address : u32,
 	length : u32,
-	xsdt : *const XSDT,
+	pub xsdt : *const XSDT,
 	extended_checksum : u8,
 	reserved : [u8; 3],
 }
 
+impl XSDP {
+
+	pub fn from_raw_pointer(ptr : *const XSDP) -> &'static XSDP {
+		let reference = unsafe { ptr.as_ref().unwrap() };
+		reference.verify().unwrap();
+		reference
+	}
+
+	fn verify(&self) -> Result<(), &'static str> {
+		// TODO checksum
+		if self.signature != *b"RSD PTR " {
+			return Err("Wrong signature");
+		}
+		return Ok(());
+	}
+}
+
 #[repr(C, packed)]
-struct FADT {
-	header : AcpiSdtHeader,
+pub struct FADT {
+	header : SDTHeader,
 	firmware_ctrl : u32,
 	dsdt : u32,
 	reserved : u8,
@@ -111,10 +137,11 @@ struct FADT {
 	reset_value : u8,
 	reserved3 : [u8; 3],
 	x_firmware_control : u64,
-	x_dsdt : *const Sdt,
+	pub x_dsdt : *const DSDT,
 
 }
 
+#[derive(Debug)]
 #[repr(C, packed)]
 struct GenericAddressStructure {
 	address_space : u8,

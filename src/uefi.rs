@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::arch::asm;
 
-type LocateProtocol = extern "efiapi" fn(protocol : *const Guid, registration : *const c_void, interface : *mut *const c_void) -> StatusCode;
+type LocateProtocol = extern "efiapi" fn(protocol : *const GUID, registration : *const c_void, interface : *mut *const c_void) -> StatusCode;
 
 type PhysicalAddress = u64;
 pub type Handle = *mut c_void;
@@ -13,7 +12,8 @@ type GOPBlt = extern "efiapi" fn(this : *mut GraphicsOutputProtocol, blt_buffer 
 // unsigned value of native width
 type UIntN = usize;
 
-pub const GRAPHICS_OUTPUT_PROTOCOL_GUID : Guid = Guid { data1 : 0x9042a9de, data2 : 0x23dc, data3 : 0x4a38, data4 : [0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a]};
+pub const GRAPHICS_OUTPUT_PROTOCOL_GUID : GUID = GUID { data1 : 0x9042a9de, data2 : 0x23dc, data3 : 0x4a38, data4 : [0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a]};
+pub const ACPI_TABLE_GUID : GUID = GUID { data1 : 0x8868e871, data2: 0xe4f1, data3 : 0x11d3, data4 : [0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81]};
 
 #[repr(C)]
 enum GOPBltOperation {
@@ -76,7 +76,9 @@ pub struct GOPMode {
 
 
 #[repr(C)]
-pub struct Guid {
+#[derive(PartialEq)]
+#[derive(Debug)]
+pub struct GUID {
 	data1 : u32,
 	data2 : u16,
 	data3 : u16,
@@ -200,7 +202,14 @@ pub struct SystemTable {
 	runtime_services : *const c_void,
 	boot_services : *const BootServices,
 	number_of_table_entries : UIntN,
-		
+	configuration_table : *const ConfigurationTable,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct ConfigurationTable {
+	guid : GUID,
+	pub data : *const c_void,
 }
 
 #[repr(C)]
@@ -211,10 +220,31 @@ impl StatusCode {
 	pub const SUCCESS : StatusCode = StatusCode(0);
 }
 
+impl SystemTable {
+	pub fn get_configuration_tables(&self) -> &[ConfigurationTable] {
+		unsafe { core::slice::from_raw_parts(self.configuration_table, self.number_of_table_entries) }
+	}
+	pub fn find_configuration_table(&self, guid : GUID) -> Option<&ConfigurationTable> {
+		for table in self.get_configuration_tables() {
+			if table.guid == guid {
+				return Some(table);
+			}
+		}
+		None
+	}
+	pub fn get_firmware_vendor(&self) -> &[u16] {
+		let mut strlen = 0;
+		while unsafe { *self.firmware_vendor.add(strlen) } != 0 {
+			strlen += 1;
+		}
+		unsafe { core::slice::from_raw_parts(self.firmware_vendor, strlen) }
+	}
+}
+
 pub fn locate_gop(system_table : &SystemTable) -> Option<*mut GraphicsOutputProtocol> {
 	let registration = core::ptr::null();
 	let mut interface : *const c_void = core::ptr::null();
-	let protocol_pointer = &GRAPHICS_OUTPUT_PROTOCOL_GUID as *const Guid;
+	let protocol_pointer = &GRAPHICS_OUTPUT_PROTOCOL_GUID as *const GUID;
 	let boot_services : &BootServices = unsafe { &*system_table.boot_services };
 	let function = boot_services.locate_protocol;
 	if let StatusCode::SUCCESS = function(protocol_pointer, registration, &mut interface) {
