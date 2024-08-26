@@ -24,6 +24,21 @@ pub struct XSDT {
 pub struct DSDT {
 	header : SDTHeader,
 }
+impl SDT for DSDT {
+	fn get_header(&self) -> &SDTHeader {
+		&self.header
+	}
+}
+
+pub trait SDT {
+	fn get_header(&self) -> &SDTHeader;
+	fn get_body_pointer(&self) -> *const u8 {
+		unsafe { (self as *const Self as *const u8).add(size_of::<SDTHeader>()) }
+	}
+	fn get_body(&self) -> &[u8] {
+		unsafe { core::slice::from_raw_parts(self.get_body_pointer(), self.get_header().length as usize - size_of::<SDTHeader>()) }
+	}
+}
 
 impl XSDT {
 	const FADT_SIGNATURE : &[u8; 4] = b"FACP";

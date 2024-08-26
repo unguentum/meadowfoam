@@ -96,15 +96,16 @@ pub struct GraphicsOutputProtocol {
 
 impl GraphicsOutputProtocol {
 
-	pub unsafe fn get_framebuffer(&self) -> Option<&mut [u32]> {
-		let frame_buffer_base = self.mode.as_ref()?.frame_buffer_base;
-		let frame_buffer_size = self.mode.as_ref()?.frame_buffer_size;
-		Some(core::slice::from_raw_parts_mut(frame_buffer_base as *mut u32, frame_buffer_size))
+	pub unsafe fn get_framebuffer(&self) -> Option<*mut u32> {
+		Some(self.mode.as_ref()?.frame_buffer_base as *mut u32)
 	}
 
-	pub unsafe fn get_pixels_per_line(&self) -> Option<usize> {
-		//Some(self.mode.as_ref()?.info.as_ref()?.vertical_resolution as usize)
+	pub unsafe fn get_pixel_width(&self) -> Option<usize> {
 		Some(self.mode.as_ref()?.info.as_ref()?.pixels_per_scanline as usize)
+	}
+
+	pub unsafe fn get_pixel_height(&self) -> Option<usize> {
+		Some(self.mode.as_ref()?.info.as_ref()?.vertical_resolution as usize)
 	}
 
 	pub fn query_mode(&self, mode : u32) -> Option<*const GOPModeInformation>{
