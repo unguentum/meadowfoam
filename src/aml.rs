@@ -1,3 +1,95 @@
+#[macro_use]
+use crate::*;
+
+struct WordConst;
+impl WordConst {
+	fn get_len(data : &[u8]) -> usize {
+		assert_eq!(data[0], 0x0B);
+		3
+	}
+}
+
+struct ComputationalData;
+impl ComputationalData {
+	fn get_len(data : &[u8]) -> usize {
+		match data[0] {
+			0x0B => WordConst::get_len(data),
+			_ => todo!("{}", data[0])
+		}
+	}
+}
+
+struct DataObject;
+impl DataObject {
+	fn get_len(data : &[u8]) -> usize {
+		match data[0] {
+			0x0A..=0x0E | 0 | 1 | 0xFF | 0x11 => ComputationalData::get_len(data),
+			0x5B => match data[1] {
+				0x30 => ComputationalData::get_len(data),
+				_ => todo!("{}", data[1])
+			}
+			_ => todo!("{}", data[0])
+		}
+	}
+}
+
+struct TermArg;
+impl TermArg {
+	fn get_len(data : &[u8]) -> usize {
+		match data[0] {
+			0x0A | 0x0B | 0x0C | 0x0E | 0x0D | 0 | 1 | 0xFF | 0x11 | 0x12 | 0x13 => DataObject::get_len(data),
+			0x5B => match data[1] {
+				0x30 => DataObject::get_len(data),
+				_ => todo!("{}", data[1])
+			}
+			_ => todo!("{}", data[0])
+		}
+	}
+}
+
+struct RegionSpace;
+impl RegionSpace {
+	fn get_len(data : &[u8]) -> usize {
+		1
+	}
+}
+
+struct RegionOffset;
+impl RegionOffset {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct RegionLen;
+impl RegionLen {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct DefOpRegion;
+impl DefOpRegion {
+	fn get_len(data : &[u8]) -> usize {
+		assert_eq!(data[0], 0x5B);
+		assert_eq!(data[1], 0x80);
+		let elem1_len = NameString::get_len(&data[2..]);
+		let elem2_len = RegionSpace::get_len(&data[2+elem1_len..]);
+		let elem3_len = RegionOffset::get_len(&data[2+elem1_len+elem2_len..]);
+		let elem4_len = RegionLen::get_len(&data[2+elem1_len+elem2_len+elem3_len..]);
+		2 + elem1_len + elem2_len + elem3_len + elem4_len
+	}
+}
+
+struct PkgLength;
+impl PkgLength {
+	fn get_len(data : &[u8]) -> usize {
+		let lead_byte = data[0];
+		let following_amount = (lead_byte & 0b11000000) >> 6;
+		1 + following_amount as usize
+	}
+}
+
 struct DefName;
 impl DefName {
 	fn get_len(data : &[u8]) -> usize {
@@ -8,13 +100,24 @@ impl DefName {
 struct DefScope;
 impl DefScope {
 	fn get_len(data : &[u8]) -> usize {
-		todo!();
+		assert_eq!(data[0], 0x10);
+		let elem1_len = PkgLength::get_len(&data[1..]);
+		let elem2_len = NameString::get_len(&data[1+elem1_len..]);
+		let elem3_len = TermList::get_len(&data[1+elem1_len+elem2_len..]);
+		1 + elem1_len + elem2_len + elem3_len
 	}
 }
 struct NamedObj;
 impl NamedObj {
 	fn get_len(data : &[u8]) -> usize {
-		todo!();
+		match data[0] {
+			// ExtOp
+			0x5B => match data[1] {
+				0x80 => DefOpRegion::get_len(data),
+				_ => todo!("{}", data[1]),
+			}
+			_ => todo!("{}", data[0])
+		}
 	}
 }
 struct Statement;
@@ -27,7 +130,9 @@ impl Statement {
 struct Expression;
 impl Expression {
 	fn get_len(data : &[u8]) -> usize {
-		todo!();
+		match data[0] {
+			_ => todo!("{}", data[0])
+		}
 	}
 }
 
@@ -83,13 +188,13 @@ struct NameString;
 impl NameString {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
-			0x5C => NamePath::get_len(&data[1..]),
+			0x5C => 1 + NamePath::get_len(&data[1..]),
 			0x5E => {
 				let mut prefix_count = 1;
 				while data[prefix_count] == 0x5E {
 					prefix_count += 1;
 				}
-				NamePath::get_len(&data[prefix_count..])
+				prefix_count + NamePath::get_len(&data[prefix_count..])
 			},
 			0x41..=0x5A | 0x5F | 0x2E | 0x2F | 0 => NamePath::get_len(data),
 			_ => panic!("Invalid name string")
@@ -153,9 +258,24 @@ impl TermObject {
 	}
 }
 
-pub fn parse_term_list(data : &[u8]) {
-	let mut index = 0;
-	while index < data.len() {
-		index += TermObject::get_len(&data[index..]);
+struct TermList;
+impl TermList {
+	fn get_len(data : &[u8]) -> usize {
+		let mut index = 0;
+		print!("Parsing term list\n");
+		while index < data.len() {
+			print!("Index: {index}\n");
+			index += TermObject::get_len(&data[index..]);
+		}
+		assert_eq!(index, data.len());
+		index
 	}
+}
+
+pub fn parse_aml(data : &[u8]) {
+	for b in 0..100 {
+		print!("{:x} ", data[b]);
+	}
+	print!("\n");
+	let len = TermList::get_len(data);
 }

@@ -15,14 +15,7 @@ mod triple_fault;
 
 use crate::acpi::SDT;
 use crate::graphics::ScreenWriter;
-
-static mut SCREEN_WRITER : ScreenWriter = ScreenWriter::default();
-
-macro_rules! print {
-	($($arg:tt)*) => {
-		unsafe { SCREEN_WRITER.write_fmt(format_args!($($arg)*)).unwrap() }
-	};
-}
+use crate::graphics::SCREEN_WRITER;
 
 #[no_mangle]
 pub fn efi_main(handle : uefi::Handle, system_table : *const uefi::SystemTable) -> ! {
@@ -59,7 +52,7 @@ pub fn efi_main(handle : uefi::Handle, system_table : *const uefi::SystemTable) 
 			let x_dsdt = unsafe { &*fadt.x_dsdt };
 			print!("{:?}\n", x_dsdt);
 			print!("AML bytes: {}\n", x_dsdt.get_body().len());
-			aml::parse_term_list(x_dsdt.get_body());
+			aml::parse_aml(x_dsdt.get_body());
 		} else {
 			print!("No ACPI table found\n");
 		}
