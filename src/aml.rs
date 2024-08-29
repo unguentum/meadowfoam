@@ -2,11 +2,16 @@ use crate::SCREEN_WRITER;
 use crate::print;
 use core::fmt::Write;
 
+// TODO implement evaluated type checking
 
 // ExpressionOpcode : 0 is missing: MethodInvocation of NullName makes no sense
 macro_rules! get_prefix {
 	(ExpressionOpcode) => {
 		0x70..=0x85 | 0x87..=0x89 | 0x90..=0x99 | 0x11..=0x13 | 0x9C..=0x9E | 0x8E | 0x5C | 0x5E | 0x41..=0x5A | 0x5F | 0x2E | 0x2F
+	};
+
+	(NameString) => {
+		0x5C | 0x5E | 0 | 0x2E | 0x2F | 0x41..=0x5A | 0x5F
 	};
 }
 
@@ -36,6 +41,37 @@ macro_rules! simple_concat_type {
 	};
 }
 
+macro_rules! sized_concat_type {
+	($new_type:ident, $($prefix:literal),*, $($other_type:ty),*) => {
+		struct $new_type;
+		impl $new_type {
+			fn get_len(data : &[u8]) -> usize {
+				const PREFIX_COUNT : usize = [$($prefix),*].len();	
+				const PREFIX : [u8; PREFIX_COUNT] = [$($prefix),*];
+				for i in 0..PREFIX_COUNT {
+					assert_eq!(data[i], PREFIX[i]);
+				}
+				let mut combined_length = PREFIX_COUNT;
+				let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[PREFIX_COUNT..]);
+				let pkg_end = pkg_size + PREFIX_COUNT;
+				combined_length += pkg_len;
+				$(
+					combined_length += <$other_type>::get_len(&data[combined_length..pkg_end]);
+				)*
+				combined_length
+			}
+		}
+	};
+}
+
+struct ByteConst;
+impl ByteConst {
+	fn get_len(data : &[u8]) -> usize {
+		assert_eq!(data[0], 0x0A);
+		2
+	}
+}
+
 struct WordConst;
 impl WordConst {
 	fn get_len(data : &[u8]) -> usize {
@@ -44,11 +80,21 @@ impl WordConst {
 	}
 }
 
+struct DWordConst;
+impl DWordConst {
+	fn get_len(data : &[u8]) -> usize {
+		assert_eq!(data[0], 0x0C);
+		5
+	}
+}
+
 struct ComputationalData;
 impl ComputationalData {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
+			0x0A => ByteConst::get_len(data),
 			0x0B => WordConst::get_len(data),
+			0x0C => DWordConst::get_len(data),
 			// ConstObj
 			0x00 | 0x01 | 0xFF => 1,
 			_ => todo!("{}", data[0])
@@ -126,14 +172,33 @@ impl PkgLength {
 		let following_amount = (lead_byte & 0b11000000) >> 6;
 		1 + following_amount as usize
 	}
-}
-
-struct DefName;
-impl DefName {
-	fn get_len(_ : &[u8]) -> usize {
-		todo!();
+	fn get_len_and_size(data : &[u8]) -> (usize, usize) {
+		let lead_byte = data[0];
+		let following_amount = (lead_byte & 0b11000000) >> 6;
+		let size = if following_amount == 0 {
+			lead_byte as u32 & 0b111111
+		} else {
+			let mut dummy : u32 = lead_byte as u32 & 0b1111;
+			for i in 0..following_amount as usize {
+				dummy |= (data[1 + i] as u32) << (8 * i + 4);
+			}
+			dummy
+		};
+		(1 + following_amount as usize, size as usize)
 	}
 }
+
+struct DataRefObject;
+impl DataRefObject {
+	fn get_len(data : &[u8]) -> usize {
+		match data[0] {
+			0 | 0xC => DataObject::get_len(data),
+			_ => todo!("{:#x}", data[0]),
+		}
+	}
+}
+
+simple_concat_type!(DefName, 0x08, NameString, DataRefObject);
 
 struct NamedField;
 impl NamedField {
@@ -168,10 +233,11 @@ impl FieldList {
 				0x0 | 0x1 | 0x2 | 0x3 | 0x41..=0x5A | 0x5F => FieldElement::get_len(&data[index..]),
 				_ => return index,
 			};
-			print!("Found element with length {} at index {} ", next_offset, index);
+			print!("Found element with length {} at index {}\n", next_offset, index);
 			index += next_offset;
 		}
-		print!("\n");
+		assert_eq!(data.len(), index);
+		print!("Done parsing field list\n");
 		index
 	}
 }
@@ -183,8 +249,8 @@ impl FieldFlags {
 	}
 }
 
-simple_concat_type!(DefField, 0x5B, 0x81, PkgLength, NameString, FieldFlags, FieldList);
-simple_concat_type!(DefScope, 0x10, PkgLength, NameString, TermList);
+sized_concat_type!(DefField, 0x5B, 0x81, NameString, FieldFlags, FieldList);
+sized_concat_type!(DefScope, 0x10, NameString, TermList);
 
 struct MethodFlags;
 impl MethodFlags {
@@ -193,7 +259,8 @@ impl MethodFlags {
 	}
 }
 
-simple_concat_type!(DefMethod, 0x14, PkgLength, NameString, MethodFlags, TermList);
+sized_concat_type!(DefMethod, 0x14, NameString, MethodFlags, TermList);
+sized_concat_type!(DefDevice, 0x5B, 0x82, NameString, TermList);
 
 struct NamedObj;
 impl NamedObj {
@@ -203,6 +270,7 @@ impl NamedObj {
 			0x5B => match data[1] {
 				0x80 => DefOpRegion::get_len(data),
 				0x81 => DefField::get_len(data),
+				0x82 => DefDevice::get_len(data),
 				_ => todo!("{}", data[1]),
 			}
 			0x14 => DefMethod::get_len(data),
@@ -218,13 +286,26 @@ impl Predicate {
 	}
 }
 
-simple_concat_type!(DefWhile, 0xA2, PkgLength, Predicate, TermList);
+struct DefElse;
+impl DefElse {
+	fn get_len(data : &[u8]) -> usize {
+		match data[0] {
+			0xA1 => DefPresentElse::get_len(data),
+			_ => 0,
+		}
+	}
+}
+
+sized_concat_type!(DefIfElse, 0xA0, Predicate, TermList, DefElse);
+sized_concat_type!(DefPresentElse, 0xA1, TermList);
+sized_concat_type!(DefWhile, 0xA2, Predicate, TermList);
 
 struct StatementOpcode;
 impl StatementOpcode {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
 			0xA2 => DefWhile::get_len(data),
+			0xA0 => DefIfElse::get_len(data),
 			_ => todo!("{:#x}", data[0]),
 		}
 	}
@@ -234,6 +315,41 @@ struct Operand;
 impl Operand {
 	fn get_len(data : &[u8]) -> usize {
 		TermArg::get_len(data)
+	}
+}
+
+struct BuffPkgStrObj;
+impl BuffPkgStrObj {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct IndexValue;
+impl IndexValue {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct ObjReference;
+impl ObjReference {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct BufferSize;
+impl BufferSize {
+	fn get_len(data : &[u8]) -> usize {
+		TermArg::get_len(data)
+	}
+}
+
+struct ByteList;
+impl ByteList {
+	fn get_len(data : &[u8]) -> usize {
+		data.len()
 	}
 }
 
@@ -250,7 +366,9 @@ impl SimpleName {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
 			0x60..=0x67 => LocalObj::get_len(data),
-			_ => todo!()
+			0x68..=0x6E => ArgObj::get_len(data),
+			get_prefix!(NameString) => NameString::get_len(data),
+			_ => panic!("Invalid simple name"),
 		}
 	}
 }
@@ -259,8 +377,8 @@ struct SuperName;
 impl SuperName {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
-			0x60..=0x67 => SimpleName::get_len(data),
-			_ => todo!(),
+			0x60..=0x6E | get_prefix!(NameString)  => SimpleName::get_len(data),
+			_ => todo!("{:#x}", data[0]),
 		}
 	}
 }
@@ -280,73 +398,36 @@ impl Target {
 	}
 }
 
-struct DefToBuffer;
-impl DefToBuffer {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x96);
-		let elem1_len = Operand::get_len(&data[1..]);
-		let elem2_len = Target::get_len(&data[1+elem1_len..]);
-		1 + elem1_len + elem2_len		
-	}
-}
 
-struct DefSubtract;
-impl DefSubtract {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x74);
-		let elem1_len = Operand::get_len(&data[1..]);
-		let elem2_len = Operand::get_len(&data[1+elem1_len..]);
-		let elem3_len = Target::get_len(&data[1+elem1_len+elem2_len..]);
-		1 + elem1_len + elem2_len + elem3_len
-	}
-}
+simple_concat_type!(DefToBuffer, 0x96, Operand, Target);
+simple_concat_type!(DefSubtract, 0x74, Operand, Operand, Target);
+simple_concat_type!(DefSizeOf, 0x87, SuperName);
+simple_concat_type!(DefStore, 0x70, TermArg, SuperName);
+simple_concat_type!(DefToHexString, 0x98, Operand, Target);
+simple_concat_type!(DefLLess, 0x95, Operand, Operand);
+simple_concat_type!(DefDerefOf, 0x83, ObjReference);
+simple_concat_type!(DefIndex, 0x88, BuffPkgStrObj, IndexValue, Target);
+simple_concat_type!(DefIncrement, 0x75, SuperName);
+simple_concat_type!(DefLEqual, 0x93, Operand, Operand);
+simple_concat_type!(DefAdd, 0x72, Operand, Operand, Target);
+simple_concat_type!(DefAnd, 0x7B, Operand, Operand, Target);
 
-struct DefSizeOf;
-impl DefSizeOf {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x87);
-		let elem1_len = SuperName::get_len(&data[1..]);
-		1 + elem1_len
-	}
-}
-
-struct DefStore;
-impl DefStore {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x70);
-		let elem1_len = TermArg::get_len(&data[1..]);
-		let elem2_len = SuperName::get_len(&data[1+elem1_len..]);
-		1 + elem1_len + elem2_len
-	}
-}
-
-struct DefToHexString;
-impl DefToHexString {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x98);
-		let elem1_len = Operand::get_len(&data[1..]);
-		let elem2_len = Target::get_len(&data[1+elem1_len..]);
-		1 + elem1_len + elem2_len
-	}
-}
-
-struct DefLLess;
-impl DefLLess {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x95);
-		let elem1_len = Operand::get_len(&data[1..]);
-		let elem2_len = Operand::get_len(&data[1+elem1_len..]);
-		1 + elem1_len + elem2_len
-	}
-}
+sized_concat_type!(DefBuffer, 0x11, BufferSize, ByteList);
 
 struct ExpressionOpcode;
 impl ExpressionOpcode {
 	fn get_len(data : &[u8]) -> usize {
 		match data[0] {
+			0x11 => DefBuffer::get_len(data),
 			0x70 => DefStore::get_len(data),
+			0x72 => DefAdd::get_len(data),
 			0x74 => DefSubtract::get_len(data),
+			0x75 => DefIncrement::get_len(data),
+			0x7B => DefAnd::get_len(data),
+			0x83 => DefDerefOf::get_len(data),
 			0x87 => DefSizeOf::get_len(data),
+			0x88 => DefIndex::get_len(data),
+			0x93 => DefLEqual::get_len(data),
 			0x95 => DefLLess::get_len(data),
 			0x96 => DefToBuffer::get_len(data),
 			0x98 => DefToHexString::get_len(data),
@@ -467,10 +548,10 @@ impl TermObject {
 			get_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
 			// ExtOp
 			0x5B => match data[1] {
-				0x87 | 0x13 | 0x88 | 0x80 | 0x84 | 0x85 | 0x81 => NamedObj::get_len(data),
+				0x87 | 0x13 | 0x88 | 0x80 | 0x84 | 0x85 | 0x81 | 0x82 => NamedObj::get_len(data),
 				0x32 | 0x27 | 0x26 | 0x24 | 0x22 | 0x21 => StatementOpcode::get_len(data),
 				get_extop_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
-				_ => panic!("Invalid term object")
+				_ => panic!("Invalid term object {:#x} {:#x}", data[0], data[1]),
 			},
 			_ => panic!("Invalid term object")
 		}
@@ -486,6 +567,7 @@ impl TermList {
 			print!("Index: {index}\n");
 			index += TermObject::get_len(&data[index..]);
 		}
+		print!("Done parsing term list\n");
 		assert_eq!(index, data.len());
 		index
 	}
@@ -503,7 +585,15 @@ pub fn parse_aml(data : &[u8]) {
 
 /*
 Errors found in the ACPI spec
-NamedObject does not include DefMethod nor DefField
-A lot of link errors
+
+missing NamedObject fields:
+	DefMethod
+	DefField
+	DefDevice
+
+A lot of hyperlink errors
 Backslash in root character messes up documentation
+
+Package length definition missing
+
 */
