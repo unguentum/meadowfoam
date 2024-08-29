@@ -14,11 +14,10 @@ mod graphics;
 mod triple_fault;
 
 use crate::acpi::SDT;
-use crate::graphics::ScreenWriter;
 use crate::graphics::SCREEN_WRITER;
 
 #[no_mangle]
-pub fn efi_main(handle : uefi::Handle, system_table : *const uefi::SystemTable) -> ! {
+pub fn efi_main(_handle : uefi::Handle, system_table : *const uefi::SystemTable) -> ! {
 
 	let system_table = unsafe { system_table.as_ref().unwrap() };
 
@@ -36,8 +35,8 @@ pub fn efi_main(handle : uefi::Handle, system_table : *const uefi::SystemTable) 
 		print!("Mode set to {}\n", current_mode);
 		print!("TextIO using UEFI GOP\n");
 		print!("Graphics protocol: {:#?}\n", &interface);
-		print!("Graphics mode : {:#?}\n", unsafe {&*interface.mode } );
-		print!("Available graphics modes: {}\n", unsafe {interface.mode.as_ref().unwrap().max_mode});
+		print!("Graphics mode : {:#?}\n", &*interface.mode);
+		print!("Available graphics modes: {}\n", interface.mode.as_ref().unwrap().max_mode);
 
 		if let Some(config_table) = system_table.find_configuration_table(uefi::ACPI_TABLE_GUID) {
 			let xsdp = acpi::XSDP::from_raw_pointer(config_table.data as *const acpi::XSDP);
