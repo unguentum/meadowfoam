@@ -131,13 +131,13 @@ impl ScreenWriter {
         self.cursor_x = 0;
         self.cursor_y += 1;
         if (self.cursor_y + 1) * FONT_HEIGHT > self.pixel_height {
-			self.cursor_y = 0;
+            self.cursor_y = 0;
 
-			for n in 0..self.pixel_width*self.pixel_height {
-				unsafe {
-					*self.frame_buffer.add(n) = 0;
-				}
-			}
+            for n in 0..self.pixel_width * self.pixel_height {
+                unsafe {
+                    *self.frame_buffer.add(n) = 0;
+                }
+            }
         }
     }
     pub const fn default() -> ScreenWriter {
@@ -171,11 +171,11 @@ impl ScreenWriter {
                     };
                 let x = px + dx;
                 let y = py + dy;
-				if x + y * self.pixel_width < self.pixel_width * self.pixel_height {
-	                unsafe {
-    	                *self.frame_buffer.add(x + y * self.pixel_width) = color;
-        	        }
-    	        }
+                if x + y * self.pixel_width < self.pixel_width * self.pixel_height {
+                    unsafe {
+                        *self.frame_buffer.add(x + y * self.pixel_width) = color;
+                    }
+                }
             }
         }
     }

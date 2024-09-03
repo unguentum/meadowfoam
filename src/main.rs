@@ -61,7 +61,10 @@ pub fn efi_main(_handle: uefi::Handle, system_table: *const uefi::SystemTable) -
         }
 
         print!("Firmware vendor:");
-        system_table.get_firmware_vendor().iter().for_each(|c| print!("{}", char::from_u32(*c as u32).unwrap_or('?')));
+        system_table
+            .get_firmware_vendor()
+            .iter()
+            .for_each(|c| print!("{}", char::from_u32(*c as u32).unwrap_or('?')));
     }
 
     loop {
@@ -74,6 +77,10 @@ pub fn efi_main(_handle: uefi::Handle, system_table: *const uefi::SystemTable) -
 
 #[panic_handler]
 fn panic_handler(panic_info: &PanicInfo) -> ! {
-    print!("!PANIC: {:?} at {:?}", panic_info.message(), panic_info.location());
+    print!(
+        "!PANIC: {:?} at {:?}",
+        panic_info.message(),
+        panic_info.location()
+    );
     loop {}
 }

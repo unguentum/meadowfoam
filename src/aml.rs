@@ -2,6 +2,10 @@ use crate::print;
 use crate::SCREEN_WRITER;
 use core::fmt::Write;
 
+const GLOBAL_METHODS_MAX : usize = 1024;
+static mut GLOBAL_METHODS: [(*const u8, usize); GLOBAL_METHODS_MAX] = [(core::ptr::null(), 0); GLOBAL_METHODS_MAX];
+static mut GLOBAL_METHOD_COUNT: usize = 0;
+
 // TODO implement evaluated type checking
 
 // ExpressionOpcode : 0 is missing: MethodInvocation of NullName makes no sense
@@ -36,25 +40,24 @@ macro_rules! get_prefix {
 }
 
 macro_rules! get_extop_prefix {
-	(TermArg) => {
-		get_extop_prefix!(ExpressionOpcode) | get_extop_prefix!(DataObject)
-	};
-	(DataObject) => {
-		get_extop_prefix!(ComputationalData)
-	};
-	(ComputationalData) => {
-		0x30
-	};
+    (TermArg) => {
+        get_extop_prefix!(ExpressionOpcode) | get_extop_prefix!(DataObject)
+    };
+    (DataObject) => {
+        get_extop_prefix!(ComputationalData)
+    };
+    (ComputationalData) => {
+        0x30
+    };
     (ExpressionOpcode) => {
         0x23 | 0x12 | 0x28 | 0x1F | 0x33 | 0x29 | 0x25
     };
-	(TermArg) => {
-		get_extop_prefix!(DataObject) | get_extop_prefix!(ExpressionOpcode)
-	};
-	(SuperName) => {
-		0x31
-	}
-
+    (TermArg) => {
+        get_extop_prefix!(DataObject) | get_extop_prefix!(ExpressionOpcode)
+    };
+    (SuperName) => {
+        0x31
+    };
 }
 
 macro_rules! simple_concat_type {
@@ -62,24 +65,18 @@ macro_rules! simple_concat_type {
 		struct $new_type;
 		impl $new_type {
 			fn get_len(data : &[u8]) -> usize {
-				//print!(concat!("Start parse ", stringify!($new_type), "\n"));
+				print!(concat!("Start parse ", stringify!($new_type), "\n"));
 				const PREFIX_COUNT : usize = [$($prefix),*].len();
 				const PREFIX : [u8; PREFIX_COUNT] = [$($prefix),*];
 				for i in 0..PREFIX_COUNT {
 					assert_eq!(data[i], PREFIX[i]);
 				}
 				let mut combined_length = PREFIX_COUNT;
-
-				//for i in 0..data.len() {
-				//	print!("{:#x} ", data[i]);
-				//}
-				//print!("\n");
-
 				$(
-					//print!(concat!("For ", stringify!($new_type), " parse ", stringify!($other_type), "\n"));
+					print!(concat!("For ", stringify!($new_type), " parse ", stringify!($other_type), "\n"));
 					combined_length += <$other_type>::get_len(&data[combined_length..]);
 				)*
-				//print!("Done parse\n");
+				print!("Done parse\n");
 				combined_length
 			}
 		}
@@ -91,7 +88,7 @@ macro_rules! sized_concat_type {
 		struct $new_type;
 		impl $new_type {
 			fn get_len(data : &[u8]) -> usize {
-				//print!(concat!("Start parse ", stringify!($new_type), "\n"));
+				print!(concat!("Start parse ", stringify!($new_type), "\n"));
 				const PREFIX_COUNT : usize = [$($prefix),*].len();
 				const PREFIX : [u8; PREFIX_COUNT] = [$($prefix),*];
 				for i in 0..PREFIX_COUNT {
@@ -101,15 +98,15 @@ macro_rules! sized_concat_type {
 				let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[PREFIX_COUNT..]);
 				let pkg_end = pkg_size + PREFIX_COUNT;
 				combined_length += pkg_len;
-				//print!(concat!("For ", stringify!($new_type), " parse {} bytes\n"), pkg_size);
+				print!(concat!("For ", stringify!($new_type), " parse {} bytes\n"), pkg_size);
 
-				//for i in 0..pkg_end {
-				//	print!("{:#x} ", data[i]);
-				//}
-				//print!("\n");
+				for i in 0..pkg_end {
+					print!("{:#x} ", data[i]);
+				}
+				print!("\n");
 
 				$(
-					//print!(concat!("For ", stringify!($new_type), " parse ", stringify!($other_type), "\n"));
+					print!(concat!("For ", stringify!($new_type), " parse ", stringify!($other_type), "\n"));
 					combined_length += <$other_type>::get_len(&data[combined_length..pkg_end]);
 				)*
 				assert_eq!(combined_length, pkg_end);
@@ -128,16 +125,16 @@ impl ByteData {
 
 struct WordData;
 impl WordData {
-	fn get_len(_: &[u8]) -> usize {
-		2
-	}
+    fn get_len(_: &[u8]) -> usize {
+        2
+    }
 }
 
 struct DWordData;
 impl DWordData {
-	fn get_len(_: &[u8]) -> usize {
-		4
-	}
+    fn get_len(_: &[u8]) -> usize {
+        4
+    }
 }
 
 type NumElements = ByteData;
@@ -174,22 +171,21 @@ impl QWordConst {
     }
 }
 
-
 struct String;
 impl String {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x0D);
-		let mut index = 1;
-		while index < data.len() {
-			if (0x01..=0x7F).contains(&data[index]) {
-				index += 1;
-			} else {
-				break
-			}
-		}
-		assert_eq!(data[index], 0);
-		index + 1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x0D);
+        let mut index = 1;
+        while index < data.len() {
+            if (0x01..=0x7F).contains(&data[index]) {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(data[index], 0);
+        index + 1
+    }
 }
 
 struct ComputationalData;
@@ -203,10 +199,10 @@ impl ComputationalData {
             0x0E => QWordConst::get_len(data),
             0x11 => DefBuffer::get_len(data),
             0x5B => match data[1] {
-				// RevisionOp
-				0x30 => 2,
-				_ => panic!("Invalid computational data"),
-            }
+                // RevisionOp
+                0x30 => 2,
+                _ => panic!("Invalid computational data"),
+            },
             // ConstObj
             0x00 | 0x01 | 0xFF => 1,
             _ => panic!("Invalid computational data {:#x}", data[0]),
@@ -232,10 +228,10 @@ impl DataObject {
 
 struct MatchOpcode;
 impl MatchOpcode {
-	fn get_len(data: &[u8]) -> usize {
-		assert!((0..=5).contains(&data[0]));
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert!((0..=5).contains(&data[0]));
+        1
+    }
 }
 
 struct ArgObj;
@@ -254,7 +250,7 @@ impl TermArg {
             // prefix 0x11, 0x12, 0x13 are both DataObject and ExpressionOpcode so they are only mentioned once
             get_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
             0x5B => match data[1] {
-            	get_extop_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
+                get_extop_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
                 get_extop_prefix!(DataObject) => DataObject::get_len(data),
                 _ => panic!("Invalid term arg"),
             },
@@ -274,9 +270,9 @@ impl RegionSpace {
 
 struct VarNumElements;
 impl VarNumElements {
-	fn get_len(data : &[u8]) -> usize {
-		TermArg::get_len(data)
-	}
+    fn get_len(data: &[u8]) -> usize {
+        TermArg::get_len(data)
+    }
 }
 
 struct RegionOffset;
@@ -361,12 +357,25 @@ impl NamedField {
 type AccessType = ByteData;
 type AccessAttrib = ByteData;
 type ExtendedAccessAttrib = ByteData;
-//type AccessLength = ByteData;
-
+type AccessLength = ByteData;
 
 simple_concat_type!(ReservedField, 0, PkgLength);
 simple_concat_type!(AccessField, 1, AccessType, AccessAttrib);
-//simple_concat_type!(ExtendedAccessField, 3, AccessType, ExtendedAccessAttrib, AccessLength);
+simple_concat_type!(
+    ExtendedAccessField,
+    3,
+    AccessType,
+    ExtendedAccessAttrib,
+    AccessLength
+);
+
+struct ConnectField;
+impl ConnectField {
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 2);
+        todo!();
+    }
+}
 
 struct FieldElement;
 impl FieldElement {
@@ -374,8 +383,8 @@ impl FieldElement {
         match data[0] {
             0x0 => ReservedField::get_len(data),
             0x1 => AccessField::get_len(data),
-            0x2 => todo!(),
-            0x3 => todo!(), //ExtendedAccessField::get_len(data),
+            0x2 => ConnectField::get_len(data),
+            0x3 => ExtendedAccessField::get_len(data),
             0x41..=0x5A | 0x5F => NamedField::get_len(data),
             _ => 0,
         }
@@ -386,20 +395,20 @@ struct FieldList;
 impl FieldList {
     fn get_len(data: &[u8]) -> usize {
         let mut index = 0;
-        //print!("Parsing field list\n");
+        print!("Parsing field list\n");
         while index < data.len() {
             let next_offset = match data[index] {
                 0x0 | 0x1 | 0x2 | 0x3 | 0x41..=0x5A | 0x5F => FieldElement::get_len(&data[index..]),
                 _ => return index,
             };
-            //print!(
-            //    "Found element with length {} at index {}\n",
-            //    next_offset, index
-            //);
+            print!(
+                "Found element with length {} at index {}\n",
+                next_offset, index
+            );
             index += next_offset;
         }
         assert_eq!(data.len(), index);
-        //print!("Done parsing field list\n");
+        print!("Done parsing field list\n");
         index
     }
 }
@@ -417,52 +426,77 @@ sized_concat_type!(DefScope, 0x10, NameString, TermList);
 struct MethodFlags;
 impl MethodFlags {
     fn get_len(_: &[u8]) -> usize {
-		//print!("METHOD FLAGS : {:#b}\n", data[0]);
+        //print!("METHOD FLAGS : {:#b}\n", data[0]);
         1
     }
 }
 
 struct SyncFlags;
 impl SyncFlags {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0] & 0b11110000, 0);
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0] & 0b11110000, 0);
+        1
+    }
 }
 
 type MutexObject = SuperName;
 type Timeout = WordData;
 
 simple_concat_type!(DefMutex, 0x5B, 0x01, NameString, SyncFlags);
-sized_concat_type!(DefMethod, 0x14, NameString, MethodFlags, TermList);
+
+
+struct DefMethod;
+impl DefMethod {
+	fn get_len(data : &[u8]) -> usize {
+		assert_eq!(data[0], 0x14);
+		let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[1..]);
+		let pkg_end = pkg_size + 1;
+		let elem1_len = NameString::get_len(&data[1+pkg_len..pkg_end]);
+		let elem2_len = MethodFlags::get_len(&data[1+pkg_len+elem1_len..pkg_end]);
+		let elem3_len = TermList::get_len(&data[1+pkg_len+elem1_len+elem2_len..pkg_end]);
+		//print!("!\n!\n!\n");
+		unsafe {
+			if GLOBAL_METHOD_COUNT == GLOBAL_METHODS_MAX {
+				panic!("Cannot read more methods");
+			}
+			GLOBAL_METHODS[GLOBAL_METHOD_COUNT] = (&data[0], data.len());
+			GLOBAL_METHOD_COUNT += 1;
+			print!("There are {GLOBAL_METHOD_COUNT} methods\n");
+		}
+
+		1 + pkg_len + elem1_len + elem2_len + elem3_len
+	}
+}
 
 struct DefDevice;
 impl DefDevice {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x5B);
-		assert_eq!(data[1], 0x82);
-		let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[2..]);
-		let pkg_end = pkg_size + 2;
-		let elem1_len = NameString::get_len(&data[2+pkg_len..pkg_end]);
-		print!("DEVICE FOUND: ");
-		NameString::print(&data[2+pkg_len..pkg_end]);
-		let elem2_len = TermList::get_len(&data[2+pkg_len+elem1_len..pkg_end]);
-		assert_eq!(pkg_size, pkg_len + elem1_len + elem2_len);
-		pkg_size + 2
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x5B);
+        assert_eq!(data[1], 0x82);
+        let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[2..]);
+        let pkg_end = pkg_size + 2;
+        let elem1_len = NameString::get_len(&data[2 + pkg_len..pkg_end]);
+        print!("DEVICE FOUND: ");
+        NameString::print(&data[2 + pkg_len..pkg_end]);
+        let elem2_len = TermList::get_len(&data[2+pkg_len+elem1_len..pkg_end]);
+        assert_eq!(pkg_size, pkg_len + elem1_len + elem2_len);
+        pkg_size + 2
+    }
 }
 
 struct DefProcessor;
 impl DefProcessor {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x5B);
-		assert_eq!(data[1], 0x83);
-		let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[2..]);
-		NameString::get_len(&data[2+pkg_len..]);
-		print!("DEPRECATED! Skipping DefProcessor ({} bytes)\n", pkg_size+2);
-		pkg_size + 2
-		
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x5B);
+        assert_eq!(data[1], 0x83);
+        let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[2..]);
+        NameString::get_len(&data[2 + pkg_len..]);
+        print!(
+            "DEPRECATED! Skipping DefProcessor ({} bytes)\n",
+            pkg_size + 2
+        );
+        pkg_size + 2
+    }
 }
 
 struct BankValue;
@@ -500,11 +534,62 @@ impl NumBits {
     }
 }
 
-sized_concat_type!(DefBankField, 0x5B, 0x87, NameString, NameString, BankValue, FieldFlags, FieldList);
+type ObjectType = ByteData;
+struct ArgumentCount;
+impl ArgumentCount {
+    fn get_len(data: &[u8]) -> usize {
+        assert!((0..=7).contains(&data[0]));
+        1
+    }
+}
+
+type SystemLevel = ByteData;
+type ResourceOrder = WordData;
+
+sized_concat_type!(
+    DefBankField,
+    0x5B,
+    0x87,
+    NameString,
+    NameString,
+    BankValue,
+    FieldFlags,
+    FieldList
+);
 simple_concat_type!(DefCreateBitField, 0x8D, SourceBuff, BitIndex, NameString);
 simple_concat_type!(DefCreateByteField, 0x8C, SourceBuff, ByteIndex, NameString);
 simple_concat_type!(DefCreateDWordField, 0x8A, SourceBuff, ByteIndex, NameString);
-simple_concat_type!(DefCreateField, 0x5B, 0x13, SourceBuff, BitIndex, NumBits, NameString);
+simple_concat_type!(
+    DefCreateField,
+    0x5B,
+    0x13,
+    SourceBuff,
+    BitIndex,
+    NumBits,
+    NameString
+);
+simple_concat_type!(DefCreateQWordField, 0x8F, SourceBuff, ByteIndex, NameString);
+simple_concat_type!(DefCreateWordField, 0x8B, SourceBuff, ByteIndex, NameString);
+simple_concat_type!(
+    DefDataRegion,
+    0x5B,
+    0x88,
+    NameString,
+    TermArg,
+    TermArg,
+    TermArg
+);
+simple_concat_type!(DefExternal, 0x15, NameString, ObjectType, ArgumentCount);
+sized_concat_type!(
+    DefPowerRes,
+    0x5B,
+    0x84,
+    NameString,
+    SystemLevel,
+    ResourceOrder,
+    TermList
+);
+sized_concat_type!(DefThermalZone, 0x5b, 0x85, NameString, TermList);
 
 struct NamedObj;
 impl NamedObj {
@@ -512,20 +597,26 @@ impl NamedObj {
         match data[0] {
             // ExtOp
             0x5B => match data[1] {
-				0x01 => DefMutex::get_len(data),
-	            0x13 => DefCreateField::get_len(data),
+                0x01 => DefMutex::get_len(data),
+                0x13 => DefCreateField::get_len(data),
                 0x80 => DefOpRegion::get_len(data),
                 0x81 => DefField::get_len(data),
                 0x82 => DefDevice::get_len(data),
                 0x83 => DefProcessor::get_len(data),
+                0x84 => DefPowerRes::get_len(data),
+                0x85 => DefThermalZone::get_len(data),
                 0x87 => DefBankField::get_len(data),
-                _ => todo!("{}", data[1]),
+                0x88 => DefDataRegion::get_len(data),
+                _ => panic!("Invalid named object {}", data[1]),
             },
             0x14 => DefMethod::get_len(data),
-			0x8A => DefCreateDWordField::get_len(data),
-			0x8C => DefCreateByteField::get_len(data),
+            0x15 => DefExternal::get_len(data),
+            0x8A => DefCreateDWordField::get_len(data),
+            0x8B => DefCreateWordField::get_len(data),
+            0x8C => DefCreateByteField::get_len(data),
             0x8D => DefCreateBitField::get_len(data),
-            _ => todo!("{}", data[0]),
+            0x8F => DefCreateQWordField::get_len(data),
+            _ => panic!("Invalid named object {}", data[0]),
         }
     }
 }
@@ -555,21 +646,21 @@ sized_concat_type!(DefElse, 0xA1, TermList);
 
 struct DefIfElse;
 impl DefIfElse {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0xA0);
-		let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[1..]);
-		let pkg_end = pkg_size + 1;
-		let elem1_len = Predicate::get_len(&data[1 + pkg_len..pkg_end]);
-		let elem2_len = TermList::get_len(&data[1 + pkg_len + elem1_len..pkg_end]);
-		assert_eq!(pkg_end, 1 + pkg_len + elem1_len + elem2_len);
-		if pkg_end < data.len() {
-			if data[pkg_end] == 0xA1 {
-				let elem3_len = DefElse::get_len(&data[pkg_end..]);
-				return 1 + pkg_len + elem1_len + elem2_len + elem3_len;
-			}
-		}
-		1 + pkg_len + elem1_len + elem2_len
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0xA0);
+        let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[1..]);
+        let pkg_end = pkg_size + 1;
+        let elem1_len = Predicate::get_len(&data[1 + pkg_len..pkg_end]);
+        let elem2_len = TermList::get_len(&data[1 + pkg_len + elem1_len..pkg_end]);
+        assert_eq!(pkg_end, 1 + pkg_len + elem1_len + elem2_len);
+        if pkg_end < data.len() {
+            if data[pkg_end] == 0xA1 {
+                let elem3_len = DefElse::get_len(&data[pkg_end..]);
+                return 1 + pkg_len + elem1_len + elem2_len + elem3_len;
+            }
+        }
+        1 + pkg_len + elem1_len + elem2_len
+    }
 }
 
 sized_concat_type!(DefPresentElse, 0xA1, TermList);
@@ -580,26 +671,26 @@ simple_concat_type!(DefRelease, 0x5B, 0x27, MutexObject);
 
 struct DefBreak;
 impl DefBreak {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0xA5);
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0xA5);
+        1
+    }
 }
 
 struct DefBreakPoint;
 impl DefBreakPoint {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0xCC);
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0xCC);
+        1
+    }
 }
 
 struct DefContinue;
 impl DefContinue {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x9F);
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x9F);
+        1
+    }
 }
 
 struct NotifyValue;
@@ -616,7 +707,6 @@ impl FatalArg {
     }
 }
 
-
 type NotifyObject = SuperName;
 type FatalType = ByteData;
 type FatalCode = DWordData;
@@ -625,10 +715,10 @@ simple_concat_type!(DefFatal, 0x5B, 0x32, FatalType, FatalCode, FatalArg);
 
 struct DefNoop;
 impl DefNoop {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0xA3);
-		1
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0xA3);
+        1
+    }
 }
 
 struct MsecTime;
@@ -654,17 +744,17 @@ struct StatementOpcode;
 impl StatementOpcode {
     fn get_len(data: &[u8]) -> usize {
         match data[0] {
-			0x5B => match data[1] {
-				0x21 => DefStall::get_len(data),
-				0x22 => DefSleep::get_len(data),
-				0x24 => DefSignal::get_len(data),
-				0x26 => DefReset::get_len(data),
-				0x27 => DefRelease::get_len(data),
-				0x32 => DefFatal::get_len(data),
-	            _ => panic!("Invalid statement {:#x}", data[1]),
-			}
-			0x86 => DefNotify::get_len(data),
-			0x9F => DefContinue::get_len(data),
+            0x5B => match data[1] {
+                0x21 => DefStall::get_len(data),
+                0x22 => DefSleep::get_len(data),
+                0x24 => DefSignal::get_len(data),
+                0x26 => DefReset::get_len(data),
+                0x27 => DefRelease::get_len(data),
+                0x32 => DefFatal::get_len(data),
+                _ => panic!("Invalid statement {:#x}", data[1]),
+            },
+            0x86 => DefNotify::get_len(data),
+            0x9F => DefContinue::get_len(data),
             0xA0 => DefIfElse::get_len(data),
             0xA2 => DefWhile::get_len(data),
             0xA3 => DefNoop::get_len(data),
@@ -760,7 +850,6 @@ impl ShiftCount {
     }
 }
 
-
 struct ByteList;
 impl ByteList {
     fn get_len(data: &[u8]) -> usize {
@@ -809,11 +898,11 @@ impl ReferenceTypeOpcode {
 
 struct DebugObj;
 impl DebugObj {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x5B);
-		assert_eq!(data[1], 0x31);
-		2
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x5B);
+        assert_eq!(data[1], 0x31);
+        2
+    }
 }
 
 struct SuperName;
@@ -822,10 +911,10 @@ impl SuperName {
         match data[0] {
             0x60..=0x6E | get_prefix!(NameString) => SimpleName::get_len(data),
             0x71 | 0x83 | 0x88 => ReferenceTypeOpcode::get_len(data),
-			0x5B => match data[1] {
-				0x31 => DebugObj::get_len(data),
-				_ => panic!("Invalid super name {:#x} {:#x}", data[0], data[1]),
-			}
+            0x5B => match data[1] {
+                0x31 => DebugObj::get_len(data),
+                _ => panic!("Invalid super name {:#x} {:#x}", data[0], data[1]),
+            },
             _ => panic!("Invalid super name"),
         }
     }
@@ -849,8 +938,8 @@ struct PackageElement;
 impl PackageElement {
     fn get_len(data: &[u8]) -> usize {
         match data[0] {
-			get_prefix!(NameString) => NameString::get_len(data),
-			get_prefix!(DataRefObject) => DataRefObject::get_len(data),
+            get_prefix!(NameString) => NameString::get_len(data),
+            get_prefix!(DataRefObject) => DataRefObject::get_len(data),
             _ => panic!("Invalid package element {:#x}", data[0]),
         }
     }
@@ -863,17 +952,17 @@ impl PackageElementList {
             return 0;
         }
         let mut index = 0;
-        //print!("Parsing package element list\n");
+        print!("Parsing package element list\n");
         while index < data.len() {
-            //print!("Parsing package element at index {index}\n");
+            print!("Parsing package element at index {index}\n");
             index += match data[index] {
                 get_prefix!(PackageElement) => PackageElement::get_len(&data[index..]),
-                _ => todo!("{:#x}", data[index]),
+                _ => panic!("Invalid package element {:#x}", data[index]),
             };
         }
-        //print!("Done parsing package element list\n");
-		assert_eq!(index, data.len());
-		index
+        print!("Done parsing package element list\n");
+        assert_eq!(index, data.len());
+        index
     }
 }
 
@@ -906,9 +995,28 @@ simple_concat_type!(DefLLessEqual, 0x92, 0x94, Operand, Operand);
 simple_concat_type!(DefMid, 0x9E, MidObj, TermArg, TermArg, Target);
 simple_concat_type!(DefLNot, 0x92, Operand);
 simple_concat_type!(DefLNotEqual, 0x92, 0x93, Operand, Operand);
-simple_concat_type!(DefLoadTable, 0x5B, 0x1F, TermArg, TermArg, TermArg, TermArg, TermArg, TermArg);
+simple_concat_type!(
+    DefLoadTable,
+    0x5B,
+    0x1F,
+    TermArg,
+    TermArg,
+    TermArg,
+    TermArg,
+    TermArg,
+    TermArg
+);
 simple_concat_type!(DefLOr, 0x91, Operand, Operand);
-simple_concat_type!(DefMatch, 0x89, SearchPkg, MatchOpcode, Operand, MatchOpcode, Operand, StartIndex);
+simple_concat_type!(
+    DefMatch,
+    0x89,
+    SearchPkg,
+    MatchOpcode,
+    Operand,
+    MatchOpcode,
+    Operand,
+    StartIndex
+);
 simple_concat_type!(DefMod, 0x85, Dividend, Divisor, Target);
 simple_concat_type!(DefMultiply, 0x77, Operand, Operand, Target);
 simple_concat_type!(DefNAnd, 0x7C, Operand, Operand, Target);
@@ -934,33 +1042,31 @@ simple_concat_type!(DefXOr, 0x7F, Operand, Operand, Target);
 
 struct DefTimer;
 impl DefTimer {
-	fn get_len(data : &[u8]) -> usize {
-		assert_eq!(data[0], 0x5B);
-		assert_eq!(data[1], 0x33);
-		2
-	}
+    fn get_len(data: &[u8]) -> usize {
+        assert_eq!(data[0], 0x5B);
+        assert_eq!(data[1], 0x33);
+        2
+    }
 }
 
 struct MethodInvocation;
 impl MethodInvocation {
-	fn get_len(data : &[u8]) -> usize {
-		//print!("Parsing method invocation\n");
-		let elem1_len = NameString::get_len(data);
-		//print!("Searching for method\n");
-		let arg_count = get_method_arg_count(&data[..elem1_len]);		
-		let elem2_len = TermArgList::get_len(&data[elem1_len..], arg_count);
-		elem1_len + elem2_len
-	}
+    fn get_len(data: &[u8]) -> usize {
+        //print!("Parsing method invocation\n");
+        let elem1_len = NameString::get_len(data);
+        //print!("Searching for method\n");
+        let arg_count = get_method_arg_count(&data[..elem1_len]);
+        let elem2_len = TermArgList::get_len(&data[elem1_len..], arg_count);
+        elem1_len + elem2_len
+    }
 }
 
 struct DefObjectType;
 impl DefObjectType {
-	fn get_len(_ : &[u8]) -> usize {
-		todo!();
-	}
+    fn get_len(_: &[u8]) -> usize {
+        todo!();
+    }
 }
-
-
 
 struct ExpressionOpcode;
 impl ExpressionOpcode {
@@ -985,43 +1091,43 @@ impl ExpressionOpcode {
             0x7E => DefNOr::get_len(data),
             0x7F => DefXOr::get_len(data),
             0x80 => DefNot::get_len(data),
-			0x81 => DefFindSetLeftBit::get_len(data),
-			0x82 => DefFindSetRightBit::get_len(data),
+            0x81 => DefFindSetLeftBit::get_len(data),
+            0x82 => DefFindSetRightBit::get_len(data),
             0x83 => DefDerefOf::get_len(data),
             0x84 => DefConcatRes::get_len(data),
             0x85 => DefMod::get_len(data),
             0x87 => DefSizeOf::get_len(data),
             0x88 => DefIndex::get_len(data),
             0x89 => DefMatch::get_len(data),
-			0x8E => DefObjectType::get_len(data),
-			0x90 => DefLAnd::get_len(data),
+            0x8E => DefObjectType::get_len(data),
+            0x90 => DefLAnd::get_len(data),
             0x91 => DefLOr::get_len(data),
             0x92 => match data[1] {
-            	0x93 => DefLNotEqual::get_len(data),
-            	0x94 => DefLLessEqual::get_len(data),
-				0x95 => DefLGreaterEqual::get_len(data),
-				_ => DefLNot::get_len(data),
-            }
+                0x93 => DefLNotEqual::get_len(data),
+                0x94 => DefLLessEqual::get_len(data),
+                0x95 => DefLGreaterEqual::get_len(data),
+                _ => DefLNot::get_len(data),
+            },
             0x93 => DefLEqual::get_len(data),
             0x94 => DefLGreater::get_len(data),
             0x95 => DefLLess::get_len(data),
             0x96 => DefToBuffer::get_len(data),
             0x97 => DefToDecimalString::get_len(data),
             0x98 => DefToHexString::get_len(data),
-			0x99 => DefToInteger::get_len(data),
-			0x9C => DefToString::get_len(data),
+            0x99 => DefToInteger::get_len(data),
+            0x9C => DefToString::get_len(data),
             0x9D => DefCopyObject::get_len(data),
             0x9E => DefMid::get_len(data),
             0x5B => match data[1] {
-            	0x12 => DefCondRefOf::get_len(data),
-            	0x1F => DefLoadTable::get_len(data),
-            	0x23 => DefAcquire::get_len(data),
-				0x25 => DefWait::get_len(data),
-				0x28 => DefFromBCD::get_len(data),
-				0x29 => DefToBCD::get_len(data),
-				0x33 => DefTimer::get_len(data),
-				_ => panic!("Invalid expression {:#x}", data[1]),
-            }
+                0x12 => DefCondRefOf::get_len(data),
+                0x1F => DefLoadTable::get_len(data),
+                0x23 => DefAcquire::get_len(data),
+                0x25 => DefWait::get_len(data),
+                0x28 => DefFromBCD::get_len(data),
+                0x29 => DefToBCD::get_len(data),
+                0x33 => DefTimer::get_len(data),
+                _ => panic!("Invalid expression {:#x}", data[1]),
+            },
             get_prefix!(NameString) => MethodInvocation::get_len(data),
             _ => panic!("Invalid expression {:#x}", data[0]),
         }
@@ -1039,17 +1145,19 @@ impl NameSeg {
                     || (0x30..=0x39).contains(&data[i])
             );
         }
-        //print!("NameSeg {}{}{}{}\n", char::from_u32(data[0] as u32).unwrap(),char::from_u32(data[1]as u32).unwrap(),char::from_u32(data[2] as u32).unwrap(),char::from_u32(data[3] as u32).unwrap());
         4
     }
 
     fn is_valid(data: &[u8]) -> bool {
         if !(0x41..=0x5A).contains(&data[0]) && data[0] != 0x5F {
-			return false;
+            return false;
         }
         for i in 1..=3 {
-            if !(0x41..=0x5A).contains(&data[i]) && data[i] != 0x5F && !(0x30..=0x39).contains(&data[i]) {
-				return false;
+            if !(0x41..=0x5A).contains(&data[i])
+                && data[i] != 0x5F
+                && !(0x30..=0x39).contains(&data[i])
+            {
+                return false;
             }
         }
         true
@@ -1063,6 +1171,19 @@ impl DualNamePath {
         let elem1_len = NameSeg::get_len(&data[1..]);
         let elem2_len = NameSeg::get_len(&data[1 + elem1_len..]);
         1 + elem1_len + elem2_len
+    }
+    fn is_valid(data: &[u8]) -> bool {
+        if data[0] != 0x2E {
+            return false;
+        }
+        if !NameSeg::is_valid(&data[1..]) {
+            return false;
+        }
+        let elem1_len = NameSeg::get_len(&data[1..]);
+        if !NameSeg::is_valid(&data[1 + elem1_len..]) {
+            return false;
+        }
+        true
     }
 }
 
@@ -1078,6 +1199,22 @@ impl MultiNamePath {
         }
         2 + offset
     }
+    fn is_valid(data: &[u8]) -> bool {
+        if data[0] != 0x2F {
+            return false;
+        }
+        let seg_count = data[1];
+        if seg_count == 0 {
+            return false;
+        }
+        let mut offset = 0;
+        for _ in 0..seg_count {
+            if !NameSeg::is_valid(&data[2 + offset..]) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 struct NamePath;
@@ -1091,12 +1228,14 @@ impl NamePath {
             _ => panic!("Invalid name path"),
         }
     }
-    fn is_valid(data : &[u8]) -> bool {
-		match data[0] {
-			0x41..=0x5A | 0x5F => NameSeg::is_valid(data),
-			0 => true,
-			_ => todo!(),
-		}
+    fn is_valid(data: &[u8]) -> bool {
+        match data[0] {
+            0x41..=0x5A | 0x5F => NameSeg::is_valid(data),
+            0 => true,
+            0x2E => DualNamePath::is_valid(data),
+            0x2F => MultiNamePath::is_valid(data),
+            _ => false,
+        }
     }
 }
 
@@ -1116,19 +1255,25 @@ impl NameString {
             _ => panic!("Invalid name string"),
         }
     }
-    fn is_valid(data : &[u8]) -> bool {
+    fn is_valid(data: &[u8]) -> bool {
         match data[0] {
-            0x5C => true,
-            0x5E => true,
+            0x5C => NamePath::is_valid(&data[1..]),
+            0x5E => {
+                let mut prefix_count = 1;
+                while data[prefix_count] == 0x5E {
+                    prefix_count += 1;
+                }
+                NamePath::is_valid(&data[prefix_count..])
+            }
             0x41..=0x5A | 0x5F | 0x2E | 0x2F | 0 => NamePath::is_valid(data),
             _ => false,
-        }		
+        }
     }
-    fn print(data : &[u8]) {
-		for i in 0..Self::get_len(data) {
-			print!("{}", char::from_u32(data[i] as u32).unwrap());
-		}
-		print!("\n");
+    fn print(data: &[u8]) {
+        for i in 0..Self::get_len(data) {
+            print!("{}", char::from_u32(data[i] as u32).unwrap());
+        }
+        print!("\n");
     }
 }
 
@@ -1178,8 +1323,10 @@ impl TermObject {
             get_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
             // ExtOp
             0x5B => match data[1] {
-            	// 0x83 DEPRECATED PROCESSOROP
-                0x87 | 0x13 | 0x88 | 0x80 | 0x84 | 0x85 | 0x81 | 0x82 | 0x83 | 0x01  => NamedObj::get_len(data),
+                // 0x83 DEPRECATED PROCESSOROP
+                0x87 | 0x13 | 0x88 | 0x80 | 0x84 | 0x85 | 0x81 | 0x82 | 0x83 | 0x01 => {
+                    NamedObj::get_len(data)
+                }
                 0x32 | 0x27 | 0x26 | 0x24 | 0x22 | 0x21 => StatementOpcode::get_len(data),
                 get_extop_prefix!(ExpressionOpcode) => ExpressionOpcode::get_len(data),
                 _ => panic!("Invalid term object {:#x} {:#x}", data[0], data[1]),
@@ -1191,13 +1338,13 @@ impl TermObject {
 
 struct TermArgList;
 impl TermArgList {
-    fn get_len(data: &[u8], arg_count : usize) -> usize {
-		//print!("Parsing term arg list with {arg_count} arguments\n");
-		let mut index = 0;
-		for arg in 0..arg_count {
-			index += TermArg::get_len(&data[index..]);
-		}
-		index
+    fn get_len(data: &[u8], arg_count: usize) -> usize {
+        let mut index = 0;
+		print!("Parsing term arg list with {arg_count} arguments\n");
+        for arg in 0..arg_count {
+            index += TermArg::get_len(&data[index..]);
+        }
+        index
     }
 }
 
@@ -1205,53 +1352,55 @@ struct TermList;
 impl TermList {
     fn get_len(data: &[u8]) -> usize {
         let mut index = 0;
-        //print!("Parsing term list\n");
+        print!("Parsing term list\n");
         while index < data.len() {
-            //print!("Index: {index}\n");
+            print!("Index: {index}\n");
             index += TermObject::get_len(&data[index..]);
         }
-        //print!("Done parsing term list\n");
+        print!("Done parsing term list\n");
         assert_eq!(index, data.len());
         index
     }
 }
 
-static mut GLOBAL_REFERENCE : u64 = 0;
-static mut GLOBAL_LENGTH : usize = 0;
+fn get_method_arg_count(name_string: &[u8]) -> usize {
 
-fn get_method_arg_count(name_string : &[u8]) -> usize {
-	let aml_data = unsafe { core::slice::from_raw_parts(GLOBAL_REFERENCE as *const u8, GLOBAL_LENGTH) };
-	//for x in name_string.iter() {
-	//	print!("{:#x} ", x);
+	//for a in name_string.iter() {
+	//	print!("{:#x}", a);
 	//}
 	//print!("\n");
-	for i in 0..aml_data.len() {
-		if aml_data[i] == 0x14 {
-			let pkg_len = PkgLength::get_len(&aml_data[1+i..]);
-			if !NameString::is_valid(&aml_data[1+i+pkg_len..]) {
-				continue;
-			}
-			let name_len = NameString::get_len(&aml_data[1+i+pkg_len..]);
-			if aml_data[1+i+pkg_len..1+i+pkg_len+name_len] == *name_string {
-				let method_flags = aml_data[1+i+pkg_len+name_len] as usize;
+
+	for method in 0..unsafe {GLOBAL_METHOD_COUNT} {
+		let data : &[u8] = unsafe{core::slice::from_raw_parts(GLOBAL_METHODS[method].0, GLOBAL_METHODS[method].1)};
+
+		//for a in data.iter() {
+		//	print!("{:#x}", a);
+		//}
+		//print!("\n");
+
+		assert_eq!(data[0], 0x14);
+		let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[1..]);
+		let pkg_end = pkg_size + 1;
+		let name_len = NameString::get_len(&data[1+pkg_len..pkg_end]);
+		if name_len == name_string.len() {
+			if data[1+pkg_len..1+pkg_len+name_len] == *name_string {
+				print!("Found method\n");
+				let method_flags = data[1+pkg_len+name_len] as usize;
 				return method_flags & 0b111;
 			}
 		}
 	}
-	//print!("Method not found, assuming 0 arguments\n");
-	// there was no method with the given name so it must? be a named field
+	// method not found
+	print!("Method not found\n");
+	//todo!();
 	0
 }
 
 pub fn parse_aml(data: &[u8]) {
-	unsafe {
-		GLOBAL_REFERENCE = &data[0] as *const u8 as u64;
-		GLOBAL_LENGTH = data.len();
-	}
     print!("Parsing {} bytes of aml term list\n", data.len());
     let len = TermList::get_len(data);
     assert_eq!(len, data.len());
-	print!("Successfully parsed {} bytes of AML\n", data.len());
+    print!("Successfully parsed {} bytes of AML\n", data.len());
 }
 
 /*
@@ -1270,7 +1419,7 @@ Package length definition missing
 
 size of ObjectReference missing
 
-DataRefObject parsing impossible
+DataRefObject parsing impossible ?
 
 The MethodInvocation Expression is messed up and makes parsing 100 times harder (no arg length)
 
@@ -1282,5 +1431,7 @@ does this mean a NamedField name is a TermArg???
 does a NamedField name count as a methodinvocation?
 
 Target : SuperName | NullName -> NullName redundant
+
+AccessLength is not defined
 
 */
