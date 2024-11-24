@@ -1273,7 +1273,6 @@ impl NameString {
         for i in 0..Self::get_len(data) {
             print!("{}", char::from_u32(data[i] as u32).unwrap());
         }
-        print!("\n");
     }
 }
 
@@ -1398,9 +1397,25 @@ fn get_method_arg_count(name_string: &[u8]) -> usize {
 
 pub fn parse_aml(data: &[u8]) {
     print!("Parsing {} bytes of aml term list\n", data.len());
+
+	print!("Skipping parse, looking for devices\n");
+
+	for x in 0..data.len() - 1 {
+		if data[x] == 0x5B {
+			if data[x+1] == 0x82 {
+				let (pkg_len, pkg_size) = PkgLength::get_len_and_size(&data[x+2..]);
+				NameString::print(&data[x+2+pkg_len..]);
+				print!(" ");
+			}
+		}
+	}
+
+	
+/*
     let len = TermList::get_len(data);
     assert_eq!(len, data.len());
     print!("Successfully parsed {} bytes of AML\n", data.len());
+*/
 }
 
 /*
